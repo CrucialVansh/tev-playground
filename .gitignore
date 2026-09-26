@@ -1,0 +1,40 @@
+# Environment variables & secrets (CRITICAL)
+.env
+.env.*
+*.env
+!.env.example
+
+# Python cache & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+wheels/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Package managers & tool cache
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Benchmark execution outputs & logs
+experiment_results.json
+*.log
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor & IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
