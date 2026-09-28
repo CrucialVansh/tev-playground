@@ -1,11 +1,12 @@
 [project]
 name = "tev-playground"
 version = "0.1.0"
-description = "Add your description here"
+description = "Compare Tev, Jev, Laya Core ML, and GPT-4o on support-ticket decisions"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "datasets>=2.20.0",
+    "laya-coreml>=0.1.0",
     "openai>=1.40.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",

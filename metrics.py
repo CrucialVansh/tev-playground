@@ -1,135 +1,103 @@
-from typing import List, Dict, Any
 import statistics
 from dataclasses import dataclass
-from schema import PipelineExecutionResult
+from typing import Dict, List, Optional
+
+from decisions import priority_distance
+from schema import DecisionOutput, SampleScore, TicketSample
+
 
 @dataclass
-class MetricSummary:
-    architecture: str
+class ModelSummary:
+    model: str
     sample_count: int
-    accuracy_pct: float
-    
-    # Classification Latency (ms)
-    class_lat_mean_ms: float
-    class_lat_p50_ms: float
-    class_lat_p90_ms: float
-    class_lat_p95_ms: float
-    
-    # End-to-End Pipeline Latency (ms)
-    e2e_lat_mean_ms: float
-    e2e_lat_p50_ms: float
-    e2e_lat_p90_ms: float
-    e2e_lat_p95_ms: float
-    
-    # Cost & Economics (USD)
-    total_class_cost_usd: float
-    total_downstream_cost_usd: float
-    total_pipeline_cost_usd: float
-    cost_per_1k_classifications_usd: float
-    cost_per_1k_pipeline_reqs_usd: float
-    
-    # Reliability
+    queue_accuracy_pct: float
+    priority_accuracy_pct: float
+    priority_mae: Optional[float]
+    type_accuracy_pct: Optional[float]
+    type_scored_count: int
     parse_success_rate_pct: float
-    downstream_triggered_count: int
+    lat_mean_ms: float
+    lat_p50_ms: float
+    lat_p95_ms: float
+    total_cost_usd: float
+    cost_per_1k_usd: float
+    queue_agreement_with_openai_pct: Optional[float]
 
-def _percentile(data: List[float], p: float) -> float:
-    if not data:
+
+def score_output(sample: TicketSample, output: DecisionOutput) -> SampleScore:
+    type_correct = None if sample.ticket_type is None else output.ticket_type == sample.ticket_type
+    return SampleScore(
+        sample_id=sample.sample_id,
+        model=output.model,
+        queue=output.queue,
+        priority=output.priority,
+        ticket_type=output.ticket_type,
+        queue_correct=output.queue == sample.queue,
+        priority_correct=output.priority == sample.priority,
+        type_correct=type_correct,
+        priority_abs_error=priority_distance(output.priority, sample.priority),
+        latency_ms=output.latency_ms,
+        input_tokens=output.input_tokens,
+        output_tokens=output.output_tokens,
+        cost_usd=output.cost_usd,
+        parse_success=output.parse_success,
+        raw_response=output.raw_response,
+    )
+
+
+def summarize(scores: List[SampleScore], openai_scores: Optional[List[SampleScore]] = None) -> ModelSummary:
+    count = len(scores)
+    if count == 0:
+        raise ValueError("Cannot summarize an empty result list.")
+
+    latencies = [score.latency_ms for score in scores]
+    total_cost = sum(score.cost_usd for score in scores)
+    type_scores = [score.type_correct for score in scores if score.type_correct is not None]
+    priority_errors = [score.priority_abs_error for score in scores if score.priority_abs_error is not None]
+
+    agreement = None
+    if openai_scores is not None and scores and scores[0].model != "openai":
+        paired = min(len(scores), len(openai_scores))
+        matches = sum(
+            1
+            for index in range(paired)
+            if scores[index].queue and scores[index].queue == openai_scores[index].queue
+        )
+        agreement = (matches / paired) * 100.0 if paired else None
+
+    return ModelSummary(
+        model=scores[0].model,
+        sample_count=count,
+        queue_accuracy_pct=_percent(sum(score.queue_correct for score in scores), count),
+        priority_accuracy_pct=_percent(sum(score.priority_correct for score in scores), count),
+        priority_mae=(sum(priority_errors) / len(priority_errors)) if priority_errors else None,
+        type_accuracy_pct=_percent(sum(type_scores), len(type_scores)) if type_scores else None,
+        type_scored_count=len(type_scores),
+        parse_success_rate_pct=_percent(sum(score.parse_success for score in scores), count),
+        lat_mean_ms=statistics.mean(latencies),
+        lat_p50_ms=_percentile(latencies, 0.50),
+        lat_p95_ms=_percentile(latencies, 0.95),
+        total_cost_usd=total_cost,
+        cost_per_1k_usd=(total_cost / count) * 1000.0,
+        queue_agreement_with_openai_pct=agreement,
+    )
+
+
+def _percent(hits: int, total: int) -> float:
+    return (hits / total) * 100.0 if total else 0.0
+
+
+def _percentile(values: List[float], fraction: float) -> float:
+    if not values:
         return 0.0
-    k = (len(data) - 1) * p
-    f = int(k)
-    c = min(f + 1, len(data) - 1)
-    d = k - f
-    sorted_d = sorted(data)
-    return sorted_d[f] + d * (sorted_d[c] - sorted_d[f])
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] + weight * (ordered[upper] - ordered[lower])
 
-def compute_pipeline_metrics(results: List[PipelineExecutionResult], architecture_name: str) -> MetricSummary:
-    n = len(results)
-    if n == 0:
-        raise ValueError("Cannot calculate metrics on empty results list.")
 
-    correct_count = sum(1 for r in results if r.is_correct)
-    accuracy_pct = (correct_count / n) * 100.0
-
-    class_latencies = [r.classification_latency_ms for r in results]
-    e2e_latencies = [r.total_latency_ms for r in results]
-
-    total_class_cost = sum(r.classification_cost_usd for r in results)
-    total_down_cost = sum(r.downstream_cost_usd for r in results)
-    total_pipeline_cost = sum(r.total_cost_usd for r in results)
-
-    cost_per_1k_class = (total_class_cost / n) * 1000.0
-    cost_per_1k_pipeline = (total_pipeline_cost / n) * 1000.0
-
-    parse_successes = sum(1 for r in results if r.parse_success)
-    parse_rate = (parse_successes / n) * 100.0
-
-    downstream_count = sum(1 for r in results if r.downstream_executed)
-
-    return MetricSummary(
-        architecture=architecture_name,
-        sample_count=n,
-        accuracy_pct=accuracy_pct,
-        class_lat_mean_ms=statistics.mean(class_latencies),
-        class_lat_p50_ms=_percentile(class_latencies, 0.50),
-        class_lat_p90_ms=_percentile(class_latencies, 0.90),
-        class_lat_p95_ms=_percentile(class_latencies, 0.95),
-        e2e_lat_mean_ms=statistics.mean(e2e_latencies),
-        e2e_lat_p50_ms=_percentile(e2e_latencies, 0.50),
-        e2e_lat_p90_ms=_percentile(e2e_latencies, 0.90),
-        e2e_lat_p95_ms=_percentile(e2e_latencies, 0.95),
-        total_class_cost_usd=total_class_cost,
-        total_downstream_cost_usd=total_down_cost,
-        total_pipeline_cost_usd=total_pipeline_cost,
-        cost_per_1k_classifications_usd=cost_per_1k_class,
-        cost_per_1k_pipeline_reqs_usd=cost_per_1k_pipeline,
-        parse_success_rate_pct=parse_rate,
-        downstream_triggered_count=downstream_count
-    )
-
-def compute_architectural_comparison(
-    mono_results: List[PipelineExecutionResult],
-    decoupled_results: List[PipelineExecutionResult]
-) -> Dict[str, Any]:
-    """
-    Computes delta and comparative metrics between Monolithic and Decoupled architectures.
-    """
-    mono_summary = compute_pipeline_metrics(mono_results, "Monolithic (GPT-4o)")
-    decoupled_summary = compute_pipeline_metrics(decoupled_results, "Decoupled (Tev1 + GPT-4o)")
-
-    # Agreement rate
-    paired_count = min(len(mono_results), len(decoupled_results))
-    agreements = sum(
-        1 for i in range(paired_count)
-        if mono_results[i].predicted_letter == decoupled_results[i].predicted_letter
-    )
-    agreement_rate_pct = (agreements / paired_count * 100.0) if paired_count > 0 else 0.0
-
-    # Speedups
-    class_speedup = (
-        mono_summary.class_lat_mean_ms / decoupled_summary.class_lat_mean_ms
-        if decoupled_summary.class_lat_mean_ms > 0 else 1.0
-    )
-    e2e_speedup = (
-        mono_summary.e2e_lat_mean_ms / decoupled_summary.e2e_lat_mean_ms
-        if decoupled_summary.e2e_lat_mean_ms > 0 else 1.0
-    )
-
-    # Cost savings
-    class_cost_reduction_pct = (
-        (1.0 - (decoupled_summary.cost_per_1k_classifications_usd / mono_summary.cost_per_1k_classifications_usd)) * 100.0
-        if mono_summary.cost_per_1k_classifications_usd > 0 else 0.0
-    )
-    pipeline_cost_reduction_pct = (
-        (1.0 - (decoupled_summary.cost_per_1k_pipeline_reqs_usd / mono_summary.cost_per_1k_pipeline_reqs_usd)) * 100.0
-        if mono_summary.cost_per_1k_pipeline_reqs_usd > 0 else 0.0
-    )
-
-    return {
-        "monolithic": mono_summary,
-        "decoupled": decoupled_summary,
-        "agreement_rate_pct": agreement_rate_pct,
-        "classification_latency_speedup": class_speedup,
-        "pipeline_latency_speedup": e2e_speedup,
-        "classification_cost_reduction_pct": class_cost_reduction_pct,
-        "pipeline_cost_reduction_pct": pipeline_cost_reduction_pct,
-    }
+def summaries_by_model(results: Dict[str, List[SampleScore]]) -> List[ModelSummary]:
+    openai_scores = results.get("openai")
+    return [summarize(results[name], openai_scores) for name in results]

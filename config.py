@@ -1,8 +1,6 @@
 import os
 from pathlib import Path
-from typing import Dict, Set
 
-# Explicitly load .env file from the project directory
 try:
     from dotenv import load_dotenv
     ENV_FILE_PATH = Path(__file__).resolve().parent / ".env"
@@ -10,59 +8,38 @@ try:
 except ImportError:
     pass
 
-# ---------------------------------------------------------
-# Model Definitions
-# ---------------------------------------------------------
-TEV_MODEL_NAME: str = "together/Tev1-4B-experimental"
-BASELINE_MODEL_NAME: str = "gpt-4o"
+DATASET_ID = "Tobi-Bueck/customer-support-tickets"
 
-# ---------------------------------------------------------
-# Pricing Models (USD per 1,000,000 tokens)
-# ---------------------------------------------------------
-# Together AI Tev1-4B: $0.042 per million input tokens, output tokens are free
-TEV_INPUT_PRICE_PER_M: float = 0.042
-TEV_OUTPUT_PRICE_PER_M: float = 0.000
+TEV_MODEL_NAME = "together/Tev1-4B-experimental"
+JEV_MODEL_NAME = "jev-latest"
+# Local Core ML port of the English Laya checkpoint (convaiinnovations/laya).
+LAYA_MODEL_NAME = os.getenv("LAYA_MODEL", "aac6fef/laya-coreml").strip() or "aac6fef/laya-coreml"
+OPENAI_MODEL_NAME = "gpt-4o"
 
-# OpenAI GPT-4o: $2.50 per million input tokens, $10.00 per million output tokens
-GPT4O_INPUT_PRICE_PER_M: float = 2.500
-GPT4O_OUTPUT_PRICE_PER_M: float = 10.000
+JEV_API_URL = "https://api.typesafe.ai/v1/systemone"
 
-# ---------------------------------------------------------
-# AG News Dataset Taxonomy & Mappings
-# ---------------------------------------------------------
-# Class indices in AG News: 0: World, 1: Sports, 2: Business, 3: Sci/Tech
-CLASS_ID_TO_NAME: Dict[int, str] = {
-    0: "World",
-    1: "Sports",
-    2: "Business",
-    3: "Sci/Tech"
-}
+# USD per 1,000,000 tokens. Decision APIs bill input tokens; output is free.
+# Laya Core ML runs on this machine, so it has no token price.
+TEV_INPUT_PRICE_PER_M = 0.042
+TEV_OUTPUT_PRICE_PER_M = 0.0
+JEV_INPUT_PRICE_PER_M = 0.042
+JEV_OUTPUT_PRICE_PER_M = 0.0
+GPT4O_INPUT_PRICE_PER_M = 2.50
+GPT4O_OUTPUT_PRICE_PER_M = 10.00
 
-OPTION_LETTER_TO_NAME: Dict[str, str] = {
-    "A": "World",
-    "B": "Sports",
-    "C": "Business",
-    "D": "Sci/Tech"
-}
 
-NAME_TO_OPTION_LETTER: Dict[str, str] = {
-    "World": "A",
-    "Sports": "B",
-    "Business": "C",
-    "Sci/Tech": "D"
-}
+def token_cost(input_tokens: int, output_tokens: int, input_price: float, output_price: float) -> float:
+    return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
 
-# The option strings formatted for classification prompts
-TAXONOMY_OPTIONS = [
-    "A: World",
-    "B: Sports",
-    "C: Business",
-    "D: Sci/Tech"
-]
 
-# ---------------------------------------------------------
-# Architectural Selective Downstream Policy
-# ---------------------------------------------------------
-# Only queries classified under these categories trigger downstream GPT-4o synthesis/action
-# (e.g. In an enterprise system, business and tech alerts need automated briefing/processing)
-ACTIONABLE_CATEGORIES: Set[str] = {"Business", "Sci/Tech"}
+def env_key(*names: str) -> str:
+    placeholders = {"", "your_together_api_key_here", "your_openai_api_key_here", "your_typesafe_api_key_here"}
+    for name in names:
+        value = os.getenv(name)
+        if value is None:
+            continue
+        stripped = value.strip()
+        if stripped in placeholders or stripped.startswith("your_"):
+            continue
+        return stripped
+    return ""
