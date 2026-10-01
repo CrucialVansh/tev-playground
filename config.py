@@ -8,7 +8,10 @@ try:
 except ImportError:
     pass
 
-DATASET_ID = "Tobi-Bueck/customer-support-tickets"
+DATASET_ID = "clinc/clinc_oos"
+# The "plus" test split has 4,500 in-scope requests (30 per intent) and 1,000 out-of-scope requests.
+DATASET_CONFIG = "plus"
+DATASET_SPLIT = "test"
 
 TEV_MODEL_NAME = "together/Tev1-4B-experimental"
 JEV_MODEL_NAME = "jev-latest"

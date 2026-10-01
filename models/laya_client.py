@@ -1,8 +1,10 @@
 import time
+from typing import Sequence
 
-from decisions import systemone_questions
-from models.systemone_client import decision_from_systemone
-from schema import DecisionOutput
+from decisions import Label, choice_question
+from models.systemone_client import answer_from_systemone
+from models.two_step import two_step_decide
+from schema import Answer, DecisionOutput
 
 
 class LayaCoreClient:
@@ -13,32 +15,15 @@ class LayaCoreClient:
 
         self.name = "laya"
         self.model_id = model
-        self.questions = systemone_questions()
         print(f"[*] Loading Laya Core ML from {model}. The first launch downloads the bundle and compiles it.")
         self.agent = laya_coreml.load(model)
         self.agent.predict("ready", {"ready": {"type": "noul", "instructions": "Is this text non-empty?"}})
         print("[✓] Laya Core ML is ready.")
 
     def decide(self, text: str) -> DecisionOutput:
+        return two_step_decide(self.name, text, self.ask, lambda _in, _out: 0.0)
+
+    def ask(self, text: str, question: str, labels: Sequence[Label]) -> Answer:
         started = time.perf_counter()
-        try:
-            payload = self.agent.predict(text, self.questions)
-        except Exception as error:
-            return DecisionOutput(
-                model=self.name,
-                queue=None,
-                priority=None,
-                ticket_type=None,
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-                input_tokens=0,
-                output_tokens=0,
-                cost_usd=0.0,
-                parse_success=False,
-                raw_response=f"error: {error}",
-            )
-        return decision_from_systemone(
-            self.name,
-            payload,
-            (time.perf_counter() - started) * 1000.0,
-            cost_usd=0.0,
-        )
+        payload = self.agent.predict(text, {"answer": choice_question(question, labels)})
+        return answer_from_systemone(payload, labels, (time.perf_counter() - started) * 1000.0)
